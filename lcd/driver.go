@@ -1,37 +1,25 @@
 package lcd
 
 import (
-	"time"
 	"gobot.io/x/gobot/platforms/raspi"
+	"time"
 )
 
-const LineOne = 0x00 // start of line 1
 const LineTwo = 0x40 // start of line 2
 
-const lcd_Clear = 1            // 0b00000001 replace all characters with ASCII 'space'
-const lcd_Home = 2             // 0b00000010 return cursor to first position on first line
-const lcd_EntryMode = 6        // 0b00000110 shift cursor from left to right on read/write
-const lcd_DisplayOff = 8       // 0b00001000 turn display off
-const lcd_DisplayOn = 12       // 0b00001100 display on, cursor off, don't blink character
-const lcd_FunctionReset = 48   // 0b00110000 reset the LCD
-const lcd_FunctionSet4bit = 40 // 0b00101000 4-bit data, 2-line display, 5 x 7 font
-const lcd_SetCursor = 128      // 0b10000000 set cursor position
-
 type Pin struct {
-	physId string
+	PhysId string
 }
 
 type PiLCD4 struct {
 	adapterRef *raspi.Adaptor
 
-	// Data pins, 1 - lowest
-	DataPin1 Pin
-	DataPin2 Pin
-	DataPin3 Pin
-	DataPin4 Pin
+	// Data pins
+	DataPins []Pin
 
 	// register select pin
 	RsPin Pin
+
 	// enable pin
 	EnablePin Pin
 }
@@ -42,82 +30,106 @@ type PiLCD interface {
 	Cls()
 
 	Print(data string)
+
+	WriteChar(data uint8)
+
+	SetCursor(line uint8, column uint8)
+}
+
+func clearBits(r *PiLCD4) {
+	for _, v := range r.DataPins {
+		r.adapterRef.DigitalWrite(v.PhysId, 0)
+	}
 }
 
 func (r *PiLCD4) Init() {
 	ref := raspi.NewAdaptor()
+	ref.Connect()
+	r.adapterRef = ref
 
-	ref.DigitalWrite(r.RsPin.physId, 0)     // set RS to low
-	ref.DigitalWrite(r.EnablePin.physId, 0) // set E to low
+	clearBits(r)
+
+	delayMs(15)
+
+	ref.DigitalWrite(r.RsPin.PhysId, 0)     // set RS to low
+	ref.DigitalWrite(r.EnablePin.PhysId, 0) // set E to low
+
+	writeDelay := func(data uint8, delay int) {
+		write4Bits(r, data)
+		delayUs(delay)
+	}
 
 	// repeat the Init command 3 times
-	write4Bits(r, lcd_FunctionReset)
-	delay(10)
-	write4Bits(r, lcd_FunctionReset)
-	delay(200)
-	write4Bits(r, lcd_FunctionReset)
-	delay(200)
+	writeDelay(3, 50)
+	writeDelay(3, 10)
+	writeDelay(3, 10)
 
-	// setup 4 bits
-	write4Bits(r, lcd_FunctionSet4bit)
-	delay(80)
-	writeInstruction(r, lcd_FunctionSet4bit)
-	delay(80)
+	writeDelay(2, 10)
 
-	// turn screen off
-	writeInstruction(r, lcd_DisplayOff)
-	delay(80)
+	// set 4bit mode. 2 lines, 5x7
+	writeInstruction(r, 0x14)
 
-	writeInstruction(r, lcd_Clear)
-	delay(4)
+	// disable display
+	writeInstruction(r, 0x10)
 
-	writeInstruction(r, lcd_EntryMode)
-	delay(80)
+	// clear display
+	writeInstruction(r, 0x1)
+	delayMs(2)
 
-	writeInstruction(r, lcd_DisplayOn) // turn the display ON
-	delay(80)
+	// cursor shift right, no display move
+	writeInstruction(r, 0x06)
+
+	// enable display no cursor
+	writeInstruction(r, 0x0c)
+
+	// clear screen
+	writeInstruction(r, 0x1)
+	delayMs(2)
+
+	// home
+	writeInstruction(r, 2)
+	delayMs(2)
 }
 
 func (r *PiLCD4) Cls() {
-	writeInstruction(r, lcd_Clear)
+	writeInstruction(r, 0x01)
+	delayMs(2)
+}
+
+func (r *PiLCD4) SetCursor(line uint8, column uint8) {
+	writeInstruction(r, 0x80|(line*LineTwo+column))
 }
 
 func (r *PiLCD4) Print(data string) {
-	writeString(r, data)
-}
-
-// =============================================== service methods
-
-func writeString(ref *PiLCD4, data string) {
 	for _, v := range []byte(data) {
-		writeChar(ref, v)
+		r.WriteChar(v)
 	}
 }
 
-func writeChar(ref *PiLCD4, data uint8) {
-	sendData(ref)
-	write4Bits(ref, data>>4)
-	write4Bits(ref, data)
+func (r *PiLCD4) WriteChar(data uint8) {
+	sendData(r)
+	write4Bits(r, data>>4)
+	write4Bits(r, data)
+	delayUs(10)
 }
 
+// =============================================== service methods ============================================
+
 func write4Bits(ref *PiLCD4, data uint8) {
-	ref.adapterRef.DigitalWrite(ref.DataPin1.physId, data&1)
-	ref.adapterRef.DigitalWrite(ref.DataPin2.physId, data&2)
-	ref.adapterRef.DigitalWrite(ref.DataPin2.physId, data&4)
-	ref.adapterRef.DigitalWrite(ref.DataPin2.physId, data&8)
-	ref.adapterRef.DigitalWrite(ref.EnablePin.physId, 1)
-	delay(1)
-	ref.adapterRef.DigitalWrite(ref.EnablePin.physId, 0)
+	for i, v := range ref.DataPins {
+		ref.adapterRef.DigitalWrite(v.PhysId, data&(1<<uint(i)))
+	}
+	strobe(ref)
 }
 
 func sendInstruction(ref *PiLCD4) {
-	ref.adapterRef.DigitalWrite(ref.RsPin.physId, 0)
-	ref.adapterRef.DigitalWrite(ref.EnablePin.physId, 0)
+	ref.adapterRef.DigitalWrite(ref.RsPin.PhysId, 0)
+	ref.adapterRef.DigitalWrite(ref.EnablePin.PhysId, 0)
 }
 
 func sendData(ref *PiLCD4) {
-	ref.adapterRef.DigitalWrite(ref.RsPin.physId, 1)
-	ref.adapterRef.DigitalWrite(ref.EnablePin.physId, 0)
+	ref.adapterRef.DigitalWrite(ref.RsPin.PhysId, 1)
+	ref.adapterRef.DigitalWrite(ref.EnablePin.PhysId, 0)
 }
 
 func writeInstruction(ref *PiLCD4, data uint8) {
@@ -126,9 +138,19 @@ func writeInstruction(ref *PiLCD4, data uint8) {
 	write4Bits(ref, data>>4)
 	// write low  bits
 	write4Bits(ref, data)
-
+	delayUs(50)
 }
 
-func delay(ms int) {
+func strobe(ref *PiLCD4) {
+	ref.adapterRef.DigitalWrite(ref.EnablePin.PhysId, 1)
+	delayUs(2)
+	ref.adapterRef.DigitalWrite(ref.EnablePin.PhysId, 0)
+}
+
+func delayUs(ms int) {
 	time.Sleep(time.Duration(ms) * time.Microsecond)
+}
+
+func delayMs(ms int) {
+	time.Sleep(time.Duration(ms) * time.Millisecond)
 }
