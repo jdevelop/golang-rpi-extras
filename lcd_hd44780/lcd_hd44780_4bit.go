@@ -1,27 +1,34 @@
-package lcd
+package lcd_hd44780
 
 import (
-	"gobot.io/x/gobot/platforms/raspi"
+	"github.com/stianeikeland/go-rpio"
 	"time"
 )
 
 const LineTwo = 0x40 // start of line 2
 
-type Pin struct {
-	PhysId string
-}
-
 type PiLCD4 struct {
-	adapterRef *raspi.Adaptor
-
 	// Data pins
-	DataPins []Pin
+	dataPins []rpio.Pin
 
 	// register select pin
-	RsPin Pin
+	rsPin rpio.Pin
 
 	// enable pin
-	EnablePin Pin
+	enablePin rpio.Pin
+}
+
+func NewLCD4(data []int, rs int, e int) (pLcd PiLCD4, err error) {
+	err = rpio.Open()
+	if err == nil {
+		pLcd.rsPin = rpio.Pin(rs)
+		pLcd.enablePin = rpio.Pin(e)
+		pLcd.dataPins = make([]rpio.Pin, len(data))
+		for i, v := range data {
+			pLcd.dataPins[i] = rpio.Pin(v)
+		}
+	}
+	return
 }
 
 type PiLCD interface {
@@ -37,22 +44,18 @@ type PiLCD interface {
 }
 
 func clearBits(r *PiLCD4) {
-	for _, v := range r.DataPins {
-		r.adapterRef.DigitalWrite(v.PhysId, 0)
+	for _, v := range r.dataPins {
+		v.Low()
 	}
 }
 
 func (r *PiLCD4) Init() {
-	ref := raspi.NewAdaptor()
-	ref.Connect()
-	r.adapterRef = ref
-
 	clearBits(r)
 
 	delayMs(15)
 
-	ref.DigitalWrite(r.RsPin.PhysId, 0)     // set RS to low
-	ref.DigitalWrite(r.EnablePin.PhysId, 0) // set E to low
+	r.rsPin.Low()     // set RS to low
+	r.enablePin.Low() // set E to low
 
 	writeDelay := func(data uint8, delay int) {
 		write4Bits(r, data)
@@ -116,20 +119,24 @@ func (r *PiLCD4) WriteChar(data uint8) {
 // =============================================== service methods ============================================
 
 func write4Bits(ref *PiLCD4, data uint8) {
-	for i, v := range ref.DataPins {
-		ref.adapterRef.DigitalWrite(v.PhysId, data&(1<<uint(i)))
+	for i, v := range ref.dataPins {
+		if data&(1<<uint(i)) > 0 {
+			v.High()
+		} else {
+			v.Low()
+		}
 	}
 	strobe(ref)
 }
 
 func sendInstruction(ref *PiLCD4) {
-	ref.adapterRef.DigitalWrite(ref.RsPin.PhysId, 0)
-	ref.adapterRef.DigitalWrite(ref.EnablePin.PhysId, 0)
+	ref.rsPin.Low()
+	ref.enablePin.Low()
 }
 
 func sendData(ref *PiLCD4) {
-	ref.adapterRef.DigitalWrite(ref.RsPin.PhysId, 1)
-	ref.adapterRef.DigitalWrite(ref.EnablePin.PhysId, 0)
+	ref.rsPin.High()
+	ref.enablePin.Low()
 }
 
 func writeInstruction(ref *PiLCD4, data uint8) {
@@ -142,9 +149,9 @@ func writeInstruction(ref *PiLCD4, data uint8) {
 }
 
 func strobe(ref *PiLCD4) {
-	ref.adapterRef.DigitalWrite(ref.EnablePin.PhysId, 1)
+	ref.enablePin.High()
 	delayUs(2)
-	ref.adapterRef.DigitalWrite(ref.EnablePin.PhysId, 0)
+	ref.enablePin.Low()
 }
 
 func delayUs(ms int) {
