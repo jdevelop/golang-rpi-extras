@@ -19,14 +19,14 @@ type PiLCD4 struct {
 }
 
 func NewLCD4(data []int, rs int, e int) (pLcd PiLCD4, err error) {
-	err = rpio.Open()
-	if err == nil {
-		pLcd.rsPin = rpio.Pin(rs)
-		pLcd.enablePin = rpio.Pin(e)
-		pLcd.dataPins = make([]rpio.Pin, len(data))
-		for i, v := range data {
-			pLcd.dataPins[i] = rpio.Pin(v)
-		}
+	if err = rpio.Open(); err != nil {
+		return
+	}
+	pLcd.rsPin = rpio.Pin(rs)
+	pLcd.enablePin = rpio.Pin(e)
+	pLcd.dataPins = make([]rpio.Pin, len(data))
+	for i, v := range data {
+		pLcd.dataPins[i] = rpio.Pin(v)
 	}
 	return
 }
