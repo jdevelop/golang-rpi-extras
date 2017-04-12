@@ -50,6 +50,14 @@ func clearBits(r *PiLCD4) {
 }
 
 func (r *PiLCD4) Init() {
+
+	r.rsPin.Output()
+	r.enablePin.Output()
+
+	for _, v := range r.dataPins {
+		v.Output()
+	}
+
 	clearBits(r)
 
 	delayMs(15)
