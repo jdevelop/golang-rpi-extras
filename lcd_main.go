@@ -1,10 +1,10 @@
 package main
 
 import (
-	lcd "github.com/jdevelop/golang-rpi-extras/lcd_hd44780"
 	"flag"
-	"strings"
+	lcd "github.com/jdevelop/golang-rpi-extras/lcd_hd44780"
 	"strconv"
+	"strings"
 )
 
 func main() {
@@ -12,6 +12,10 @@ func main() {
 	rsPin := flag.Int("rs", 20, "RS pin")
 	ePin := flag.Int("e", 21, "E pin")
 	data := flag.String("data", "6,13,19,26", "data pins, comma-separated")
+	t1 := flag.String("t1", "Hello", "Text line 1")
+	t2 := flag.String("t2", "World", "Text line 2")
+
+	flag.Parse()
 
 	pinsStr := strings.Split(*data, ",")
 	pins := make([]int, 4)
@@ -29,8 +33,8 @@ func main() {
 
 	rpi.Init()
 	rpi.Cls()
-	rpi.Print("-=  HELLO  =-")
+	rpi.Print(*t1)
 	rpi.SetCursor(1, 0)
-	rpi.Print("-=  WORLD  =-")
+	rpi.Print(*t2)
 
 }
