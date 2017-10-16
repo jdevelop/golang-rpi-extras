@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"github.com/jdevelop/golang-rpi-extras/rf522/commands"
 	"time"
-	"github.com/fulr/spidev"
+	"golang.org/x/exp/io/spi"
 )
 
 type RFID struct {
@@ -13,12 +13,21 @@ type RFID struct {
 	Authenticated bool
 	antennaGain   int
 	MaxSpeedHz    int
-	spiDev        *spidev.SPIDevice
+	spiDev        *spi.Device
 	irqChannel    chan bool
 }
 
 func MakeRFID(busId, deviceId, maxSpeed, resetPin, irqPin int) (device *RFID, err error) {
-	spiDev, err := spidev.NewSPIDevice(fmt.Sprintf("/dev/spidev%d.%d", busId, deviceId))
+
+	spiDev, err := spi.Open(&spi.Devfs{
+		Dev:      fmt.Sprintf("/dev/spidev%d.%d", busId, deviceId),
+		Mode:     spi.Mode(spi.Mode0),
+		MaxSpeed: int64(maxSpeed),
+	})
+
+	spiDev.SetBitOrder(spi.MSBFirst)
+	spiDev.SetBitsPerWord(8)
+	spiDev.SetCSChange(false)
 
 	if err != nil {
 		return
@@ -56,7 +65,7 @@ func MakeRFID(busId, deviceId, maxSpeed, resetPin, irqPin int) (device *RFID, er
 	})
 	*/
 
-	err = dev.init()
+	err = dev.Reset()
 
 	device = dev
 
@@ -100,8 +109,8 @@ func (r *RFID) init() (err error) {
 }
 
 func (r *RFID) writeSpiData(dataIn []byte) (out []byte, err error) {
-	out = make([]byte, 2)
-	out, err = r.spiDev.Xfer(dataIn)
+	out = make([]byte, len(dataIn))
+	err = r.spiDev.Tx(dataIn, out)
 	return
 }
 
