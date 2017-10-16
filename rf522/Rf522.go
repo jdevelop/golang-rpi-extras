@@ -4,12 +4,15 @@ import (
 	"fmt"
 	"github.com/jdevelop/golang-rpi-extras/rf522/commands"
 	"time"
-	"golang.org/x/exp/io/spi"
+	"github.com/ecc1/spi"
+	"github.com/davecheney/gpio"
+	rpio "github.com/davecheney/gpio/rpi"
+	"github.com/sirupsen/logrus"
 )
 
 type RFID struct {
-	//ResetPin      gpio.Pin
-	//IrqPin        gpio.Pin
+	ResetPin      gpio.Pin
+	IrqPin        gpio.Pin
 	Authenticated bool
 	antennaGain   int
 	MaxSpeedHz    int
@@ -19,15 +22,10 @@ type RFID struct {
 
 func MakeRFID(busId, deviceId, maxSpeed, resetPin, irqPin int) (device *RFID, err error) {
 
-	spiDev, err := spi.Open(&spi.Devfs{
-		Dev:      fmt.Sprintf("/dev/spidev%d.%d", busId, deviceId),
-		Mode:     spi.Mode(spi.Mode0),
-		MaxSpeed: int64(maxSpeed),
-	})
+	spiDev, err := spi.Open(fmt.Sprintf("/dev/spidev%d.%d", busId, deviceId), maxSpeed, 0)
 
-	spiDev.SetBitOrder(spi.MSBFirst)
+	spiDev.SetLSBFirst(false)
 	spiDev.SetBitsPerWord(8)
-	spiDev.SetCSChange(false)
 
 	if err != nil {
 		return
@@ -38,34 +36,28 @@ func MakeRFID(busId, deviceId, maxSpeed, resetPin, irqPin int) (device *RFID, er
 		MaxSpeedHz: maxSpeed,
 	}
 
-	/*
 	pin, err := rpio.OpenPin(resetPin, gpio.ModeOutput)
 	if err != nil {
 		return
 	}
 	dev.ResetPin = pin
 	dev.ResetPin.Set()
-	*/
 
-	/*
 	pin, err = rpio.OpenPin(irqPin, gpio.ModeInput)
 	if err != nil {
 		return
 	}
 	dev.IrqPin = pin
 	dev.IrqPin.PullUp()
-	*/
 
 	dev.irqChannel = make(chan bool)
 
-	/*
 	dev.IrqPin.BeginWatch(gpio.EdgeFalling, func() {
-		fmt.Println("Interrupt")
+		logrus.Debug("Interrupt")
 		dev.irqChannel <- true
 	})
-	*/
 
-	err = dev.Reset()
+	err = dev.init()
 
 	device = dev
 
@@ -110,7 +102,18 @@ func (r *RFID) init() (err error) {
 
 func (r *RFID) writeSpiData(dataIn []byte) (out []byte, err error) {
 	out = make([]byte, len(dataIn))
-	err = r.spiDev.Tx(dataIn, out)
+	copy(out, dataIn)
+	err = r.spiDev.Transfer(out)
+	return
+}
+
+func printBytes(data []byte) (res string) {
+	res = "["
+	for _, v := range data[0:len(data)-1] {
+		res = res + fmt.Sprintf("%d, ", byte(v))
+	}
+	res = res + fmt.Sprintf("%d", data[len(data)-1])
+	res = res + "]"
 	return
 }
 
@@ -122,7 +125,9 @@ func (r *RFID) writeSpiData(dataIn []byte) (out []byte, err error) {
 func (r *RFID) devWrite(address int, data byte) (err error) {
 	newData := [2]byte{(byte(address) << 1) & 0x7E, data}
 	readBuf, err := r.writeSpiData(newData[0:])
-	fmt.Println(">>", newData, readBuf)
+	if logrus.GetLevel() == logrus.DebugLevel {
+		logrus.Debug(">>" + printBytes(newData[:]) + " " + printBytes(readBuf))
+	}
 	return
 }
 
@@ -133,7 +138,9 @@ func (r *RFID) devWrite(address int, data byte) (err error) {
 func (r *RFID) devRead(address int) (result byte, err error) {
 	data := [2]byte{((byte(address) << 1) & 0x7E) | 0x80, 0}
 	rb, err := r.writeSpiData(data[0:])
-	fmt.Println("<<", data, rb)
+	if logrus.GetLevel() == logrus.DebugLevel {
+		logrus.Debug("<<" + printBytes(data[:]) + " " + printBytes(rb))
+	}
 	result = rb[1]
 	return
 }
@@ -200,7 +207,7 @@ func (r *RFID) Reset() (err error) {
 func (r *RFID) SetAntenna(state bool) (err error) {
 	if state {
 		current, err := r.devRead(commands.RegTxControl)
-		fmt.Println("Antenna:", current)
+		fmt.Println("Antenna", current)
 		if err != nil {
 			return err
 		}
