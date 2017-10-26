@@ -189,7 +189,7 @@ func (r *RFID) SetAntennaGain(gain int) {
 
 func (r *RFID) Reset() (err error) {
 	r.Authenticated = false
-	err = r.devWrite(0x01, commands.ModeReset)
+	err = r.devWrite(commands.CommandReg, commands.ModeReset)
 	return
 }
 
@@ -235,26 +235,26 @@ func (r *RFID) cardWrite(command byte, data []byte) (error bool, backData []byte
 		irqWait = 0x30
 	}
 
-	r.devWrite(0x02, irq|0x80)
-	r.clearBitmask(0x04, 0x80)
-	r.setBitmask(0x0A, 0x80)
-	r.devWrite(0x01, commands.ModeIdle)
+	r.devWrite(commands.CommIEnReg, irq|0x80)
+	r.clearBitmask(commands.CommIrqReg, 0x80)
+	r.setBitmask(commands.FIFOLevelReg, 0x80)
+	r.devWrite(commands.CommandReg, commands.ModeIdle)
 
 	for _, v := range data {
-		r.devWrite(0x09, v)
+		r.devWrite(commands.FIFODataReg, v)
 	}
 
-	r.devWrite(0x01, command)
+	r.devWrite(commands.CommandReg, command)
 
 	if command == commands.ModeTransrec {
-		r.setBitmask(0x0D, 0x80)
+		r.setBitmask(commands.BitFramingReg, 0x80)
 	}
 
 	i := 2000
 	n := byte(0)
 
 	for ; i > 0; i-- {
-		n, err = r.devRead(0x04)
+		n, err = r.devRead(commands.CommIrqReg)
 		if err != nil {
 			return
 		}
@@ -263,14 +263,14 @@ func (r *RFID) cardWrite(command byte, data []byte) (error bool, backData []byte
 		}
 	}
 
-	r.clearBitmask(0x0D, 0x80)
+	r.clearBitmask(commands.BitFramingReg, 0x80)
 
 	if i == 0 {
 		error = true
 		return
 	}
 
-	if d, err1 := r.devRead(0x06); err1 != nil || d&0x1B != 0 {
+	if d, err1 := r.devRead(commands.ErrorReg); err1 != nil || d&0x1B != 0 {
 		err = err1
 		error = true
 		logrus.Error("E2")
@@ -283,12 +283,12 @@ func (r *RFID) cardWrite(command byte, data []byte) (error bool, backData []byte
 	}
 
 	if command == commands.ModeTransrec {
-		n, err = r.devRead(0x0A)
+		n, err = r.devRead(commands.FIFOLevelReg)
 		logrus.Info("N is ", n)
 		if err != nil {
 			return
 		}
-		lastBits, err1 := r.devRead(0x0C)
+		lastBits, err1 := r.devRead(commands.ControlReg)
 		logrus.Info("lastBits is ", lastBits)
 		if err1 != nil {
 			err = err1
@@ -310,7 +310,7 @@ func (r *RFID) cardWrite(command byte, data []byte) (error bool, backData []byte
 		}
 
 		for i := byte(0); i < n; i++ {
-			byteVal, err1 := r.devRead(0x09)
+			byteVal, err1 := r.devRead(commands.FIFODataReg)
 			if err1 != nil {
 				err = err1
 				return
@@ -326,7 +326,7 @@ func (r *RFID) cardWrite(command byte, data []byte) (error bool, backData []byte
 func (r *RFID) Request() (error bool, backBits int, err error) {
 	error = true
 	backBits = 0
-	err = r.devWrite(0x0D, 0x07)
+	err = r.devWrite(commands.BitFramingReg, 0x07)
 	if err != nil {
 		return
 	}
@@ -355,11 +355,11 @@ func (r *RFID) Wait() (err error) {
 	if err != nil {
 		return
 	}
-	err = r.devWrite(0x04, 0x00)
+	err = r.devWrite(commands.CommIrqReg, 0x00)
 	if err != nil {
 		return
 	}
-	err = r.devWrite(0x02, 0xA0)
+	err = r.devWrite(commands.CommIEnReg, 0xA0)
 	if err != nil {
 		return
 	}
@@ -367,15 +367,15 @@ func (r *RFID) Wait() (err error) {
 
 interruptLoop:
 	for {
-		err = r.devWrite(0x09, 0x26)
+		err = r.devWrite(commands.FIFODataReg, 0x26)
 		if err != nil {
 			return
 		}
-		err = r.devWrite(0x01, 0x0C)
+		err = r.devWrite(commands.CommandReg, 0x0C)
 		if err != nil {
 			return
 		}
-		err = r.devWrite(0x0D, 0x87)
+		err = r.devWrite(commands.BitFramingReg, 0x87)
 		if err != nil {
 			return
 		}
@@ -386,5 +386,177 @@ interruptLoop:
 			// do nothing
 		}
 	}
+	return
+}
+
+func (r *RFID) AntiColl() (status bool, backData []byte, err error) {
+
+	err = r.devWrite(commands.BitFramingReg, 0x00)
+
+	status, backData, _, err = r.cardWrite(commands.PCD_TRANSCEIVE, []byte{commands.PICC_ANTICOLL, 0x20}[:])
+
+	if !status || err != nil {
+		return
+	}
+
+	if len(backData) != 5 {
+		status = false
+		return
+	}
+
+	crc := byte(0)
+
+	for _, v := range backData[:4] {
+		crc = crc ^ v
+	}
+
+	status = crc == backData[4]
+
+	return
+}
+
+func (r *RFID) CRC(inData []byte) (res []byte, err error) {
+	res = []byte{0, 0}
+	err = r.clearBitmask(commands.DivIrqReg, 0x04)
+	if err != nil {
+		return
+	}
+	err = r.setBitmask(commands.FIFOLevelReg, 0x80)
+	if err != nil {
+		return
+	}
+	for _, v := range inData {
+		r.devWrite(commands.FIFODataReg, v)
+	}
+	err = r.devWrite(commands.CommandReg, commands.PCD_CALCCRC)
+	if err != nil {
+		return
+	}
+	for i := byte(0xFF); i > 0; i-- {
+		n, err1 := r.devRead(commands.DivIrqReg)
+		if err1 != nil {
+			err = err1
+			return
+		}
+		if n&0x04 > 0 {
+			break
+		}
+	}
+	lsb, err := r.devRead(commands.CRCResultRegL)
+	if err != nil {
+		return
+	}
+	res[0] = lsb
+
+	msb, err := r.devRead(commands.CRCResultRegM)
+	if err != nil {
+		return
+	}
+	res[1] = msb
+	return
+}
+
+func (r *RFID) SelectTag(serial []byte) (id byte, err error) {
+	dataBuf := make([]byte, len(serial)+2)
+	dataBuf[0] = commands.PICC_SElECTTAG
+	dataBuf[1] = 0x70
+	copy(dataBuf[2:], serial)
+	crc, err := r.CRC(dataBuf)
+	if err != nil {
+		return
+	}
+	dataBuf = append(dataBuf, crc[0], crc[1])
+	status, backData, backLen, err := r.cardWrite(commands.PCD_TRANSCEIVE, dataBuf)
+	if err != nil {
+		return
+	}
+	if status && backLen == 0x18 {
+		id = backData[0]
+	} else {
+		id = 0
+	}
+	return
+}
+
+type AuthStatus byte
+
+const (
+	AuthOk          AuthStatus = iota
+	AuthReadFailure
+	AuthFailure
+)
+
+func (r *RFID) Auth(mode byte, blockAddress byte, sectorKey []byte, serial []byte) (err error, authS AuthStatus) {
+	buffer := make([]byte, 2+len(sectorKey)+4)
+	buffer[0] = mode
+	buffer[1] = blockAddress
+	copy(buffer[2:], sectorKey)
+	copy(buffer[(2 + len(sectorKey)):], serial[:4])
+	status, _, _, err := r.cardWrite(commands.PCD_AUTHENT, buffer)
+	if err != nil {
+		return
+	}
+	if !status {
+		authS = AuthReadFailure
+		return
+	}
+	n, err := r.devRead(commands.Status2Reg)
+	if err != nil {
+		return
+	}
+	if n&0x08 != 0 {
+		authS = AuthFailure
+	}
+	return
+}
+
+func (r *RFID) StopCrypto() (err error) {
+	err = r.clearBitmask(commands.Status2Reg, 0x08)
+	return
+}
+
+func (r *RFID) preAccess(blockAddr byte, cmd byte) (status bool, data []byte, backLen int, err error) {
+	send := make([]byte, 4)
+	send[0] = cmd
+	send[1] = blockAddr
+
+	crc, err := r.CRC(send[:2])
+	if err != nil {
+		return
+	}
+	send[2] = crc[0]
+	send[3] = crc[1]
+	status, data, backLen, err = r.cardWrite(commands.PCD_TRANSCEIVE, send)
+	return
+}
+
+func (r *RFID) Read(blockAddr byte) (status bool, data []byte, err error) {
+	status, data, backLen, err := r.preAccess(blockAddr, commands.PICC_READ)
+	status = backLen == 16
+	return
+}
+
+func (r *RFID) Write(blockAddr byte, data []byte) (err error) {
+	status, read, backLen, err := r.preAccess(blockAddr, commands.PICC_WRITE)
+	if ! status || err != nil || backLen != 4 {
+		return
+	}
+	if read[0]&0x0F != 0x0A {
+		status = false
+		return
+	}
+	newData := make([]byte, 18)
+	copy(newData, data[:16])
+	crc, err := r.CRC(newData[:16])
+	if err != nil {
+		return
+	}
+	newData[16] = crc[0]
+	newData[17] = crc[1]
+	status, read, backLen, err = r.cardWrite(commands.PCD_TRANSCEIVE, newData)
+	if ! status {
+		return
+	}
+	status = backLen == 4 && read[0]&0x0F == 0x0A
 	return
 }
