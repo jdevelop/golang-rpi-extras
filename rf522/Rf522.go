@@ -17,7 +17,6 @@ type RFID struct {
 	antennaGain   int
 	MaxSpeedHz    int
 	spiDev        *spi.Device
-	irqChannel    chan bool
 }
 
 func MakeRFID(busId, deviceId, maxSpeed, resetPin, irqPin int) (device *RFID, err error) {
@@ -50,21 +49,14 @@ func MakeRFID(busId, deviceId, maxSpeed, resetPin, irqPin int) (device *RFID, er
 	dev.IrqPin = pin
 	dev.IrqPin.PullUp()
 
-	dev.irqChannel = make(chan bool)
-
-	dev.IrqPin.BeginWatch(gpio.EdgeFalling, func() {
-		logrus.Debug("Interrupt")
-		dev.irqChannel <- true
-	})
-
-	err = dev.init()
+	err = dev.Init()
 
 	device = dev
 
 	return
 }
 
-func (r *RFID) init() (err error) {
+func (r *RFID) Init() (err error) {
 	err = r.Reset()
 	if err != nil {
 		return
@@ -97,6 +89,7 @@ func (r *RFID) init() (err error) {
 	if err != nil {
 		return
 	}
+	logrus.Debug("Init done")
 	return
 }
 
@@ -110,9 +103,9 @@ func (r *RFID) writeSpiData(dataIn []byte) (out []byte, err error) {
 func printBytes(data []byte) (res string) {
 	res = "["
 	for _, v := range data[0:len(data)-1] {
-		res = res + fmt.Sprintf("%d, ", byte(v))
+		res = res + fmt.Sprintf("%02x, ", byte(v))
 	}
-	res = res + fmt.Sprintf("%d", data[len(data)-1])
+	res = res + fmt.Sprintf("%02x", data[len(data)-1])
 	res = res + "]"
 	return
 }
@@ -124,8 +117,9 @@ func printBytes(data []byte) (res string) {
 
 func (r *RFID) devWrite(address int, data byte) (err error) {
 	newData := [2]byte{(byte(address) << 1) & 0x7E, data}
-	readBuf, err := r.writeSpiData(newData[0:])
+	readBuf, err := r.writeSpiData(newData[:])
 	if logrus.GetLevel() == logrus.DebugLevel {
+		newData[0] = newData[0] >> 1
 		logrus.Debug(">>" + printBytes(newData[:]) + " " + printBytes(readBuf))
 	}
 	return
@@ -137,8 +131,9 @@ func (r *RFID) devWrite(address int, data byte) (err error) {
  */
 func (r *RFID) devRead(address int) (result byte, err error) {
 	data := [2]byte{((byte(address) << 1) & 0x7E) | 0x80, 0}
-	rb, err := r.writeSpiData(data[0:])
+	rb, err := r.writeSpiData(data[:])
 	if logrus.GetLevel() == logrus.DebugLevel {
+		data[0] = (data[0] >> 1) & 0x7f
 		logrus.Debug("<<" + printBytes(data[:]) + " " + printBytes(rb))
 	}
 	result = rb[1]
@@ -151,10 +146,12 @@ func (r *RFID) devRead(address int) (result byte, err error) {
         self.dev_write(address, current | mask)
  */
 func (r *RFID) setBitmask(address, mask int) (err error) {
+	logrus.Debug("Set mask ", address, mask)
 	current, err := r.devRead(address)
 	if err != nil {
 		return
 	}
+	logrus.Debug("Set mask value ", address, current|byte(mask))
 	err = r.devWrite(address, current|byte(mask))
 	return
 }
@@ -165,10 +162,12 @@ func (r *RFID) setBitmask(address, mask int) (err error) {
         self.dev_write(address, current & (~mask))
  */
 func (r *RFID) clearBitmask(address, mask int) (err error) {
+	logrus.Debug("Clear mask ", address, mask)
 	current, err := r.devRead(address)
 	if err != nil {
 		return
 	}
+	logrus.Debug("Set mask value ", address, current&^byte(mask))
 	err = r.devWrite(address, current&^byte(mask))
 	return
 
@@ -207,7 +206,7 @@ func (r *RFID) Reset() (err error) {
 func (r *RFID) SetAntenna(state bool) (err error) {
 	if state {
 		current, err := r.devRead(commands.RegTxControl)
-		fmt.Println("Antenna", current)
+		logrus.Debug("Antenna", current)
 		if err != nil {
 			return err
 		}
@@ -220,8 +219,139 @@ func (r *RFID) SetAntenna(state bool) (err error) {
 	return
 }
 
+func (r *RFID) cardWrite(command byte, data []byte) (error bool, backData []byte, backLength int, err error) {
+	backData = make([]byte, 0)
+	backLength = -1
+	error = false
+	irq := byte(0x00)
+	irqWait := byte(0x00)
+
+	switch command {
+	case commands.ModeAuth:
+		irq = 0x12
+		irqWait = 0x10
+	case commands.ModeTransrec:
+		irq = 0x77
+		irqWait = 0x30
+	}
+
+	r.devWrite(0x02, irq|0x80)
+	r.clearBitmask(0x04, 0x80)
+	r.setBitmask(0x0A, 0x80)
+	r.devWrite(0x01, commands.ModeIdle)
+
+	for _, v := range data {
+		r.devWrite(0x09, v)
+	}
+
+	r.devWrite(0x01, command)
+
+	if command == commands.ModeTransrec {
+		r.setBitmask(0x0D, 0x80)
+	}
+
+	i := 2000
+	n := byte(0)
+
+	for ; i > 0; i-- {
+		n, err = r.devRead(0x04)
+		if err != nil {
+			return
+		}
+		if n&0x01 == 0 || n&irqWait == 0 {
+			break
+		}
+	}
+
+	r.clearBitmask(0x0D, 0x80)
+
+	if i == 0 {
+		error = true
+		return
+	}
+
+	if d, err1 := r.devRead(0x06); err1 != nil || d&0x1B != 0 {
+		err = err1
+		error = true
+		logrus.Error("E2")
+		return
+	}
+
+	if n&irq&0x01 == 1 {
+		logrus.Error("E1")
+		error = true
+	}
+
+	if command == commands.ModeTransrec {
+		n, err = r.devRead(0x0A)
+		logrus.Info("N is ", n)
+		if err != nil {
+			return
+		}
+		lastBits, err1 := r.devRead(0x0C)
+		logrus.Info("lastBits is ", lastBits)
+		if err1 != nil {
+			err = err1
+			return
+		}
+		lastBits = lastBits & 0x07
+		if lastBits != 0 {
+			backLength = (int(n)-1)*8 + int(lastBits)
+		} else {
+			backLength = int(n) * 8
+		}
+
+		if n == 0 {
+			n = 1
+		}
+
+		if n > 16 {
+			n = 16
+		}
+
+		for i := byte(0); i < n; i++ {
+			byteVal, err1 := r.devRead(0x09)
+			if err1 != nil {
+				err = err1
+				return
+			}
+			backData = append(backData, byteVal)
+		}
+
+	}
+
+	return
+}
+
+func (r *RFID) Request() (error bool, backBits int, err error) {
+	error = true
+	backBits = 0
+	err = r.devWrite(0x0D, 0x07)
+	if err != nil {
+		return
+	}
+
+	error, _, backBits, err = r.cardWrite(commands.ModeTransrec, []byte{0x26}[:])
+
+	logrus.Info(error, err, backBits)
+
+	error = err != nil || error || backBits != 0x10
+
+	return
+}
+
 func (r *RFID) Wait() (err error) {
-	err = r.init()
+	irqChannel := make(chan bool)
+	r.IrqPin.BeginWatch(gpio.EdgeFalling, func() {
+		irqChannel <- true
+	})
+
+	defer func() {
+		r.IrqPin.EndWatch()
+		close(irqChannel)
+	}()
+
+	err = r.Init()
 	if err != nil {
 		return
 	}
@@ -233,8 +363,10 @@ func (r *RFID) Wait() (err error) {
 	if err != nil {
 		return
 	}
-	waiting := true
-	for waiting {
+	logrus.SetLevel(logrus.ErrorLevel)
+
+interruptLoop:
+	for {
 		err = r.devWrite(0x09, 0x26)
 		if err != nil {
 			return
@@ -248,8 +380,8 @@ func (r *RFID) Wait() (err error) {
 			return
 		}
 		select {
-		case _ = <-r.irqChannel:
-			waiting = false
+		case _ = <-irqChannel:
+			break interruptLoop
 		case <-time.After(100 * time.Millisecond):
 			// do nothing
 		}
