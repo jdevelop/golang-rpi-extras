@@ -284,12 +284,10 @@ func (r *RFID) cardWrite(command byte, data []byte) (error bool, backData []byte
 
 	if command == commands.ModeTransrec {
 		n, err = r.devRead(commands.FIFOLevelReg)
-		logrus.Info("N is ", n)
 		if err != nil {
 			return
 		}
 		lastBits, err1 := r.devRead(commands.ControlReg)
-		logrus.Info("lastBits is ", lastBits)
 		if err1 != nil {
 			err = err1
 			return
@@ -323,19 +321,19 @@ func (r *RFID) cardWrite(command byte, data []byte) (error bool, backData []byte
 	return
 }
 
-func (r *RFID) Request() (error bool, backBits int, err error) {
-	error = true
+func (r *RFID) Request() (status bool, backBits int, err error) {
+	status = true
 	backBits = 0
 	err = r.devWrite(commands.BitFramingReg, 0x07)
 	if err != nil {
 		return
 	}
 
-	error, _, backBits, err = r.cardWrite(commands.ModeTransrec, []byte{0x26}[:])
+	status, _, backBits, err = r.cardWrite(commands.ModeTransrec, []byte{0x26}[:])
 
-	logrus.Info(error, err, backBits)
+	logrus.Info(status, err, backBits)
 
-	error = err != nil || error || backBits != 0x10
+	status = err == nil && !status && backBits == 0x10
 
 	return
 }
@@ -395,11 +393,13 @@ func (r *RFID) AntiColl() (status bool, backData []byte, err error) {
 
 	status, backData, _, err = r.cardWrite(commands.PCD_TRANSCEIVE, []byte{commands.PICC_ANTICOLL, 0x20}[:])
 
-	if !status || err != nil {
+	if status || err != nil {
+		logrus.Error("Card write ", status, err)
 		return
 	}
 
 	if len(backData) != 5 {
+		logrus.Error("Back data expected 5, actual ", len(backData))
 		status = false
 		return
 	}
@@ -410,7 +410,11 @@ func (r *RFID) AntiColl() (status bool, backData []byte, err error) {
 		crc = crc ^ v
 	}
 
+	logrus.Debug("Back data ", printBytes(backData), ", CRC ", printBytes([]byte{crc}))
+
 	status = crc == backData[4]
+
+	backData = backData[:4]
 
 	return
 }
@@ -456,7 +460,7 @@ func (r *RFID) CRC(inData []byte) (res []byte, err error) {
 	return
 }
 
-func (r *RFID) SelectTag(serial []byte) (id byte, err error) {
+func (r *RFID) SelectTag(serial []byte) (blocks byte, err error) {
 	dataBuf := make([]byte, len(serial)+2)
 	dataBuf[0] = commands.PICC_SElECTTAG
 	dataBuf[1] = 0x70
@@ -467,13 +471,17 @@ func (r *RFID) SelectTag(serial []byte) (id byte, err error) {
 	}
 	dataBuf = append(dataBuf, crc[0], crc[1])
 	status, backData, backLen, err := r.cardWrite(commands.PCD_TRANSCEIVE, dataBuf)
-	if err != nil {
+	if status || err != nil {
+		logrus.Warn("Can't select tag ", status, backData, backLen, err)
 		return
 	}
-	if status && backLen == 0x18 {
-		id = backData[0]
+
+	logrus.Info("Tag info : ", status, backData, backLen, err)
+
+	if !status && backLen == 0x18 {
+		blocks = backData[0]
 	} else {
-		id = 0
+		blocks = 0
 	}
 	return
 }
@@ -486,7 +494,7 @@ const (
 	AuthFailure
 )
 
-func (r *RFID) Auth(mode byte, blockAddress byte, sectorKey []byte, serial []byte) (err error, authS AuthStatus) {
+func (r *RFID) Auth(mode byte, blockAddress byte, sectorKey []byte, serial []byte) (authS AuthStatus, err error) {
 	buffer := make([]byte, 2+len(sectorKey)+4)
 	buffer[0] = mode
 	buffer[1] = blockAddress
@@ -496,7 +504,7 @@ func (r *RFID) Auth(mode byte, blockAddress byte, sectorKey []byte, serial []byt
 	if err != nil {
 		return
 	}
-	if !status {
+	if status {
 		authS = AuthReadFailure
 		return
 	}
@@ -532,6 +540,7 @@ func (r *RFID) preAccess(blockAddr byte, cmd byte) (status bool, data []byte, ba
 
 func (r *RFID) Read(blockAddr byte) (status bool, data []byte, err error) {
 	status, data, backLen, err := r.preAccess(blockAddr, commands.PICC_READ)
+	logrus.Info("Read data:  ", backLen, status, printBytes(data), err)
 	status = backLen == 16
 	return
 }
