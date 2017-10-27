@@ -258,7 +258,7 @@ func (r *RFID) cardWrite(command byte, data []byte) (error bool, backData []byte
 		if err != nil {
 			return
 		}
-		if n&0x01 == 0 || n&irqWait == 0 {
+		if n&(irqWait|1) != 0 {
 			break
 		}
 	}
