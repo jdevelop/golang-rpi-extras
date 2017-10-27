@@ -189,7 +189,7 @@ func (r *RFID) SetAntennaGain(gain int) {
 
 func (r *RFID) Reset() (err error) {
 	r.Authenticated = false
-	err = r.devWrite(commands.CommandReg, commands.ModeReset)
+	err = r.devWrite(commands.CommandReg, commands.PCD_RESETPHASE)
 	return
 }
 
@@ -205,16 +205,16 @@ func (r *RFID) Reset() (err error) {
  */
 func (r *RFID) SetAntenna(state bool) (err error) {
 	if state {
-		current, err := r.devRead(commands.RegTxControl)
+		current, err := r.devRead(commands.TxControlReg)
 		logrus.Debug("Antenna", current)
 		if err != nil {
 			return err
 		}
 		if current&0x03 == 0 {
-			err = r.setBitmask(commands.RegTxControl, 0x03)
+			err = r.setBitmask(commands.TxControlReg, 0x03)
 		}
 	} else {
-		err = r.clearBitmask(commands.RegTxControl, 0x03)
+		err = r.clearBitmask(commands.TxControlReg, 0x03)
 	}
 	return
 }
@@ -227,10 +227,10 @@ func (r *RFID) cardWrite(command byte, data []byte) (error bool, backData []byte
 	irqWait := byte(0x00)
 
 	switch command {
-	case commands.ModeAuth:
+	case commands.PCD_AUTHENT:
 		irq = 0x12
 		irqWait = 0x10
-	case commands.ModeTransrec:
+	case commands.PCD_TRANSCEIVE:
 		irq = 0x77
 		irqWait = 0x30
 	}
@@ -238,7 +238,7 @@ func (r *RFID) cardWrite(command byte, data []byte) (error bool, backData []byte
 	r.devWrite(commands.CommIEnReg, irq|0x80)
 	r.clearBitmask(commands.CommIrqReg, 0x80)
 	r.setBitmask(commands.FIFOLevelReg, 0x80)
-	r.devWrite(commands.CommandReg, commands.ModeIdle)
+	r.devWrite(commands.CommandReg, commands.PCD_IDLE)
 
 	for _, v := range data {
 		r.devWrite(commands.FIFODataReg, v)
@@ -246,7 +246,7 @@ func (r *RFID) cardWrite(command byte, data []byte) (error bool, backData []byte
 
 	r.devWrite(commands.CommandReg, command)
 
-	if command == commands.ModeTransrec {
+	if command == commands.PCD_TRANSCEIVE {
 		r.setBitmask(commands.BitFramingReg, 0x80)
 	}
 
@@ -280,9 +280,10 @@ func (r *RFID) cardWrite(command byte, data []byte) (error bool, backData []byte
 	if n&irq&0x01 == 1 {
 		logrus.Error("E1")
 		error = true
+		return
 	}
 
-	if command == commands.ModeTransrec {
+	if command == commands.PCD_TRANSCEIVE {
 		n, err = r.devRead(commands.FIFOLevelReg)
 		if err != nil {
 			return
@@ -329,7 +330,7 @@ func (r *RFID) Request() (status bool, backBits int, err error) {
 		return
 	}
 
-	status, _, backBits, err = r.cardWrite(commands.ModeTransrec, []byte{0x26}[:])
+	status, _, backBits, err = r.cardWrite(commands.PCD_TRANSCEIVE, []byte{0x26}[:])
 
 	logrus.Info(status, err, backBits)
 

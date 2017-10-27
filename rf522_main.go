@@ -40,7 +40,7 @@ func main() {
 
 	logrus.Info("Blocks found ", blocks)
 
-	state, err := rfid.Auth(commands.AuthB, 0, []byte{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}, uuid)
+	state, err := rfid.Auth(commands.PICC_AUTHENT1A, 0, []byte{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}, uuid)
 	if err != nil || state != rf522.AuthOk {
 		logrus.Fatal("Can not authenticate ", err, " => ", state)
 	}
