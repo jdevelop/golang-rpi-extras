@@ -20,6 +20,8 @@ type RFID struct {
 	spiDev        *spi.Device
 }
 
+var DefaultKey = []byte{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}
+
 func MakeRFID(busId, deviceId, maxSpeed, resetPin, irqPin int) (device *RFID, err error) {
 
 	spiDev, err := spi.Open(fmt.Sprintf("/dev/spidev%d.%d", busId, deviceId), maxSpeed, 0)
@@ -599,7 +601,7 @@ func (r *RFID) Auth(mode byte, sector byte, block byte, sectorKey []byte, serial
 	return
 }
 
-func (r *RFID) ReadCard(sector byte, block byte) (data []byte, err error) {
+func (r *RFID) ReadCard(sector byte, block byte, key []byte) (data []byte, err error) {
 	defer func() {
 		r.StopCrypto()
 	}()
@@ -623,7 +625,7 @@ func (r *RFID) ReadCard(sector byte, block byte) (data []byte, err error) {
 	if err != nil {
 		return
 	}
-	state, err := r.Auth(commands.PICC_AUTHENT1B, sector, block, []byte{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}, uuid)
+	state, err := r.Auth(commands.PICC_AUTHENT1B, sector, block, key, uuid)
 	if err != nil || state != AuthOk {
 		logrus.Fatal("Can not authenticate ", err, " => ", state)
 	}

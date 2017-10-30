@@ -24,7 +24,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	data, err := rfid.ReadCard(byte(*sector), byte(*block))
+	data, err := rfid.ReadCard(byte(*sector), byte(*block), rf522.DefaultKey)
 
 	if err != nil {
 		log.Fatal(err)

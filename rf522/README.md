@@ -23,15 +23,15 @@ func main() {
 
 	flag.Parse()
 
+	// use BCM numbering here
 	logrus.SetLevel(logrus.InfoLevel)
-	logrus.SetOutput(os.Stdout)
-	// bus and device id
+	log.SetOutput(os.Stdout)
 	rfid, err := rf522.MakeRFID(0, 0, 1000000, 25, 24)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	data, err := rfid.ReadCard(byte(*sector), byte(*block))
+	data, err := rfid.ReadCard(byte(*sector), byte(*block), rf522.DefaultKey)
 
 	if err != nil {
 		log.Fatal(err)
