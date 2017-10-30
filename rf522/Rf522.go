@@ -220,10 +220,9 @@ func (r *RFID) SetAntenna(state bool) (err error) {
 	return
 }
 
-func (r *RFID) cardWrite(command byte, data []byte) (error bool, backData []byte, backLength int, err error) {
+func (r *RFID) cardWrite(command byte, data []byte) (backData []byte, backLength int, err error) {
 	backData = make([]byte, 0)
 	backLength = -1
-	error = false
 	irqEn := byte(0x00)
 	irqWait := byte(0x00)
 
@@ -267,20 +266,20 @@ func (r *RFID) cardWrite(command byte, data []byte) (error bool, backData []byte
 	r.clearBitmask(commands.BitFramingReg, 0x80)
 
 	if i == 0 {
-		error = true
+		err = errors.New("can't read data after 2000 loops")
 		return
 	}
 
 	if d, err1 := r.devRead(commands.ErrorReg); err1 != nil || d&0x1B != 0 {
 		err = err1
-		error = true
 		logrus.Error("E2")
 		return
 	}
 
 	if n&irqEn&0x01 == 1 {
 		logrus.Error("E1")
-		error = true
+		err = errors.New("IRQ error")
+		return
 	}
 
 	if command == commands.PCD_TRANSCEIVE {
@@ -322,19 +321,20 @@ func (r *RFID) cardWrite(command byte, data []byte) (error bool, backData []byte
 	return
 }
 
-func (r *RFID) Request() (status bool, backBits int, err error) {
-	status = true
+func (r *RFID) Request() (backBits int, err error) {
 	backBits = 0
 	err = r.devWrite(commands.BitFramingReg, 0x07)
 	if err != nil {
 		return
 	}
 
-	status, _, backBits, err = r.cardWrite(commands.PCD_TRANSCEIVE, []byte{0x26}[:])
+	_, backBits, err = r.cardWrite(commands.PCD_TRANSCEIVE, []byte{0x26}[:])
 
-	logrus.Info(status, err, backBits)
+	logrus.Info(err, backBits)
 
-	status = err == nil && !status && backBits == 0x10
+	if backBits != 0x10 {
+		err = errors.New(fmt.Sprintf("wrong number of bits %d", backBits))
+	}
 
 	return
 }
@@ -388,20 +388,19 @@ interruptLoop:
 	return
 }
 
-func (r *RFID) AntiColl() (status bool, backData []byte, err error) {
+func (r *RFID) AntiColl() (backData []byte, err error) {
 
 	err = r.devWrite(commands.BitFramingReg, 0x00)
 
-	status, backData, _, err = r.cardWrite(commands.PCD_TRANSCEIVE, []byte{commands.PICC_ANTICOLL, 0x20}[:])
+	backData, _, err = r.cardWrite(commands.PCD_TRANSCEIVE, []byte{commands.PICC_ANTICOLL, 0x20}[:])
 
-	if status || err != nil {
-		logrus.Error("Card write ", status, err)
+	if err != nil {
+		logrus.Error("Card write ", err)
 		return
 	}
 
 	if len(backData) != 5 {
-		logrus.Error("Back data expected 5, actual ", len(backData))
-		status = false
+		err = errors.New(fmt.Sprintf("Back data expected 5, actual %d", len(backData)))
 		return
 	}
 
@@ -413,7 +412,9 @@ func (r *RFID) AntiColl() (status bool, backData []byte, err error) {
 
 	logrus.Debug("Back data ", printBytes(backData), ", CRC ", printBytes([]byte{crc}))
 
-	status = crc == backData[4]
+	if crc != backData[4] {
+		err = errors.New(fmt.Sprintf("CRC mismatch, expected %02x actual %02x", crc, backData[4]))
+	}
 
 	return
 }
@@ -469,15 +470,15 @@ func (r *RFID) SelectTag(serial []byte) (blocks byte, err error) {
 		return
 	}
 	dataBuf = append(dataBuf, crc[0], crc[1])
-	status, backData, backLen, err := r.cardWrite(commands.PCD_TRANSCEIVE, dataBuf)
-	if status || err != nil {
-		logrus.Warn("Can't select tag ", status, backData, backLen, err)
+	backData, backLen, err := r.cardWrite(commands.PCD_TRANSCEIVE, dataBuf)
+	if err != nil {
+		logrus.Warn("Can't select tag ", backData, backLen, err)
 		return
 	}
 
-	logrus.Info("Tag info : ", status, backData, backLen, err)
+	logrus.Info("Tag info : ", backData, backLen, err)
 
-	if !status && backLen == 0x18 {
+	if backLen == 0x18 {
 		blocks = backData[0]
 	} else {
 		blocks = 0
@@ -493,20 +494,16 @@ const (
 	AuthFailure
 )
 
-func (r *RFID) Auth(mode byte, blockAddress byte, sectorKey []byte, serial []byte) (authS AuthStatus, err error) {
+func (r *RFID) auth(mode byte, blockAddress byte, sectorKey []byte, serial []byte) (authS AuthStatus, err error) {
 	buffer := make([]byte, 2)
 	buffer[0] = mode
 	buffer[1] = blockAddress
 	buffer = append(buffer, sectorKey...)
 	buffer = append(buffer, serial[:4]...)
 	logrus.Info("CARD Auth: ", printBytes(buffer))
-	status, _, _, err := r.cardWrite(commands.PCD_AUTHENT, buffer)
+	_, _, err = r.cardWrite(commands.PCD_AUTHENT, buffer)
 	if err != nil {
 		logrus.Error(err)
-		return
-	}
-	if status {
-		logrus.Warn("Can not read the card data")
 		authS = AuthReadFailure
 		return
 	}
@@ -528,7 +525,7 @@ func (r *RFID) StopCrypto() (err error) {
 	return
 }
 
-func (r *RFID) preAccess(blockAddr byte, cmd byte) (status bool, data []byte, backLen int, err error) {
+func (r *RFID) preAccess(blockAddr byte, cmd byte) (data []byte, backLen int, err error) {
 	send := make([]byte, 4)
 	send[0] = cmd
 	send[1] = blockAddr
@@ -540,21 +537,23 @@ func (r *RFID) preAccess(blockAddr byte, cmd byte) (status bool, data []byte, ba
 	send[2] = crc[0]
 	send[3] = crc[1]
 	logrus.Info("Send access data ", printBytes(send))
-	status, data, backLen, err = r.cardWrite(commands.PCD_TRANSCEIVE, send)
+	data, backLen, err = r.cardWrite(commands.PCD_TRANSCEIVE, send)
 	return
 }
 
-func (r *RFID) Read(blockAddr byte) (status bool, data []byte, err error) {
-	status, data, backLen, err := r.preAccess(blockAddr, commands.PICC_READ)
-	logrus.Info("Read data:  ", backLen, status, printBytes(data), err)
-	status = len(data) == 16
+func (r *RFID) read(blockAddr byte) (data []byte, err error) {
+	data, backLen, err := r.preAccess(blockAddr, commands.PICC_READ)
+	logrus.Info("Read data:  ", backLen, printBytes(data), err)
+	if len(data) != 16 {
+		err = errors.New(fmt.Sprintf("Expected 16 bytes, actual %d", len(data)))
+	}
 	return
 }
 
-func (r *RFID) Write(blockAddr byte, data []byte) (err error) {
-	status, read, backLen, err := r.preAccess(blockAddr, commands.PICC_WRITE)
-	if status || err != nil || backLen != 4 {
-		logrus.Warn("Can not grant Write to block ", status, read, backLen, err)
+func (r *RFID) write(blockAddr byte, data []byte) (err error) {
+	read, backLen, err := r.preAccess(blockAddr, commands.PICC_WRITE)
+	if err != nil || backLen != 4 {
+		logrus.Warn("Can not grant Write to block ", read, backLen, err)
 		return
 	}
 	if read[0]&0x0F != 0x0A {
@@ -570,11 +569,66 @@ func (r *RFID) Write(blockAddr byte, data []byte) (err error) {
 	}
 	newData[16] = crc[0]
 	newData[17] = crc[1]
-	status, read, backLen, err = r.cardWrite(commands.PCD_TRANSCEIVE, newData)
-	if status {
-		err = errors.New("can not write card data")
+	read, backLen, err = r.cardWrite(commands.PCD_TRANSCEIVE, newData)
+	if err != nil {
 		return
 	}
-	status = backLen == 4 && read[0]&0x0F == 0x0A
+	if backLen != 4 || read[0]&0x0F != 0x0A {
+		err = errors.New("can not write data")
+	}
+	return
+}
+
+func calcBlockAddress(sector byte, block byte) (addr byte) {
+	addr = sector*16 + block
+	return
+}
+
+func (r *RFID) ReadBlock(sector byte, block byte) (res [] byte, err error) {
+	res, err = r.read(calcBlockAddress(sector, block%3))
+	return
+}
+
+func (r *RFID) ReadSectorTrail(sector int) (res [] byte, err error) {
+	res, err = r.read(byte(sector*16 + 3))
+	return
+}
+
+func (r *RFID) Auth(mode byte, sector byte, block byte, sectorKey []byte, serial []byte) (authS AuthStatus, err error) {
+	authS, err = r.auth(mode, calcBlockAddress(sector, block), sectorKey, serial)
+	return
+}
+
+func (r *RFID) ReadCard(sector byte, block byte) (data []byte, err error) {
+	defer func() {
+		r.StopCrypto()
+	}()
+	err = r.Wait()
+	if err != nil {
+		return
+	}
+	err = r.Init()
+	if err != nil {
+		return
+	}
+	_, err = r.Request()
+	if err != nil {
+		return
+	}
+	uuid, err := r.AntiColl()
+	if err != nil {
+		return
+	}
+	_, err = r.SelectTag(uuid)
+	if err != nil {
+		return
+	}
+	state, err := r.Auth(commands.PICC_AUTHENT1B, sector, block, []byte{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}, uuid)
+	if err != nil || state != AuthOk {
+		logrus.Fatal("Can not authenticate ", err, " => ", state)
+	}
+
+	data, err = r.ReadBlock(sector, block)
+
 	return
 }
