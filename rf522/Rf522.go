@@ -634,3 +634,57 @@ func (r *RFID) ReadCard(sector byte, block byte, key []byte) (data []byte, err e
 
 	return
 }
+
+type BlockAccess byte
+
+type SectorTrailerAccess byte
+
+const (
+	AnyKeyRWID    BlockAccess = iota
+	RAB_WN_IN_DN              = 0x02
+	RAB_WB_IN_DN              = 0x04
+	RAB_WB_IB_DAB             = 0x06
+	RAB_WN_IN_DAB             = 0x01
+	RB_WB_IN_DN               = 0x03
+	RB_WN_IN_DN               = 0x05
+	RN_WN_IN_DN               = 0x07
+
+	KeyA_RN_WA_BITS_RA_WN_KeyB_RA_WA        SectorTrailerAccess = iota
+	KeyA_RN_WN_BITS_RA_WN_KeyB_RA_WN                            = 0x02
+	KeyA_RN_WB_BITS_RAB_WN_KeyB_RN_WB                           = 0x04
+	KeyA_RN_WN_BITS_RAB_WN_KeyB_RN_WN                           = 0x06
+	KeyA_RN_WA_BITS_RA_WA_KeyB_RA_WA                            = 0x01
+	KeyA_RN_WB_BITS_RAB_WB_KeyB_RN_WB                           = 0x03
+	KeyA_RN_WN_BITS_RAB_WB_KeyB_RN_WN                           = 0x05
+	KeyA_RN_WN_BITS_RAB_WN_KeyB_RN_WN_EXTRA                     = 0x07
+)
+
+type BlocksAccess struct {
+	B0, B1, B2 BlockAccess
+	B3         SectorTrailerAccess
+}
+
+func (ba *BlocksAccess) getBits(bitNum uint) (res byte) {
+	shift := bitNum - 1
+	bit := byte(1 << shift)
+	res = (byte(ba.B0)&bit)>>shift | ((byte(ba.B1)&bit)>>shift)<<1 | ((byte(ba.B2)&bit)>>shift)<<2 | ((byte(ba.B3)&bit)>>shift)<<3
+	return
+}
+
+func CalculateBlockAccess(ba *BlocksAccess) (res []byte) {
+	res = make([]byte, 4)
+	res[0] = (^ba.getBits(1) & 0x0F) | ((^ba.getBits(2) & 0x0F) << 4)
+	res[1] = (^ba.getBits(3) & 0x0F) | (ba.getBits(1) & 0x0F << 4)
+	res[2] = (ba.getBits(2) & 0x0F) | (ba.getBits(3) & 0x0F << 4)
+	res[3] = res[0] ^ res[1] ^ res[2]
+	return
+}
+
+func ParseBlockAccess(ad []byte) (ba *BlocksAccess) {
+	ba = new(BlocksAccess)
+	ba.B0 = BlockAccess(ad[1]&0x10>>4 | ad[2]&0x01<<1 | ad[2]&0x10>>2)
+	ba.B1 = BlockAccess(ad[1]&0x20>>5 | ad[2]&0x02 | ad[2]&0x20>>3)
+	ba.B2 = BlockAccess(ad[1]&0x40>>6 | ad[2]&0x04>>1 | ad[2]&0x40>>4)
+	ba.B3 = SectorTrailerAccess(ad[1]&0x80>>7 | ad[2]&0x08>>2 | ad[2]&0x80>>5)
+	return
+}
