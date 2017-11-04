@@ -1,14 +1,14 @@
 package main
 
 import (
-	"github.com/jdevelop/golang-rpi-extras/rf522"
-	"log"
-	"github.com/sirupsen/logrus"
-	"os"
 	"flag"
 	"fmt"
-	"strconv"
+	"github.com/jdevelop/golang-rpi-extras/rf522"
 	"github.com/jdevelop/golang-rpi-extras/rf522/commands"
+	"github.com/sirupsen/logrus"
+	"log"
+	"os"
+	"strconv"
 )
 
 func main() {

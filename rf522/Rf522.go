@@ -1,14 +1,14 @@
 package rf522
 
 import (
+	"errors"
 	"fmt"
-	"github.com/jdevelop/golang-rpi-extras/rf522/commands"
-	"time"
-	"github.com/ecc1/spi"
 	"github.com/davecheney/gpio"
 	rpio "github.com/davecheney/gpio/rpi"
+	"github.com/ecc1/spi"
+	"github.com/jdevelop/golang-rpi-extras/rf522/commands"
 	"github.com/sirupsen/logrus"
-	"errors"
+	"time"
 )
 
 type RFID struct {
@@ -105,7 +105,7 @@ func (r *RFID) writeSpiData(dataIn []byte) (out []byte, err error) {
 
 func printBytes(data []byte) (res string) {
 	res = "["
-	for _, v := range data[0:len(data)-1] {
+	for _, v := range data[0 : len(data)-1] {
 		res = res + fmt.Sprintf("%02x, ", byte(v))
 	}
 	res = res + fmt.Sprintf("%02x", data[len(data)-1])
@@ -114,9 +114,9 @@ func printBytes(data []byte) (res string) {
 }
 
 /*
-    def dev_write(self, address, value):
-        self.spi_transfer([(address << 1) & 0x7E, value])
- */
+   def dev_write(self, address, value):
+       self.spi_transfer([(address << 1) & 0x7E, value])
+*/
 
 func (r *RFID) devWrite(address int, data byte) (err error) {
 	newData := [2]byte{(byte(address) << 1) & 0x7E, data}
@@ -129,9 +129,9 @@ func (r *RFID) devWrite(address int, data byte) (err error) {
 }
 
 /*
-    def dev_read(self, address):
-        return self.spi_transfer([((address << 1) & 0x7E) | 0x80, 0])[1]
- */
+   def dev_read(self, address):
+       return self.spi_transfer([((address << 1) & 0x7E) | 0x80, 0])[1]
+*/
 func (r *RFID) devRead(address int) (result byte, err error) {
 	data := [2]byte{((byte(address) << 1) & 0x7E) | 0x80, 0}
 	rb, err := r.writeSpiData(data[:])
@@ -144,10 +144,10 @@ func (r *RFID) devRead(address int) (result byte, err error) {
 }
 
 /*
-    def set_bitmask(self, address, mask):
-        current = self.dev_read(address)
-        self.dev_write(address, current | mask)
- */
+   def set_bitmask(self, address, mask):
+       current = self.dev_read(address)
+       self.dev_write(address, current | mask)
+*/
 func (r *RFID) setBitmask(address, mask int) (err error) {
 	logrus.Debug("Set mask ", address, mask)
 	current, err := r.devRead(address)
@@ -160,10 +160,10 @@ func (r *RFID) setBitmask(address, mask int) (err error) {
 }
 
 /*
-    def clear_bitmask(self, address, mask):
-        current = self.dev_read(address)
-        self.dev_write(address, current & (~mask))
- */
+   def clear_bitmask(self, address, mask):
+       current = self.dev_read(address)
+       self.dev_write(address, current & (~mask))
+*/
 func (r *RFID) clearBitmask(address, mask int) (err error) {
 	logrus.Debug("Clear mask ", address, mask)
 	current, err := r.devRead(address)
@@ -177,13 +177,13 @@ func (r *RFID) clearBitmask(address, mask int) (err error) {
 }
 
 /*
-    def set_antenna_gain(self, gain):
-        """
-        Sets antenna gain from a value from 0 to 7.
-        """
-        if 0 <= gain <= 7:
-            self.antenna_gain = gain
- */
+   def set_antenna_gain(self, gain):
+       """
+       Sets antenna gain from a value from 0 to 7.
+       """
+       if 0 <= gain <= 7:
+           self.antenna_gain = gain
+*/
 func (r *RFID) SetAntennaGain(gain int) {
 	if 0 <= gain && gain <= 7 {
 		r.antennaGain = gain
@@ -197,15 +197,15 @@ func (r *RFID) Reset() (err error) {
 }
 
 /*
-    def set_antenna(self, state):
-        if state == True:
-            current = self.dev_read(self.reg_tx_control)
-            if ~(current & 0x03):
-                self.set_bitmask(self.reg_tx_control, 0x03)
-        else:
-            self.clear_bitmask(self.reg_tx_control, 0x03)
+   def set_antenna(self, state):
+       if state == True:
+           current = self.dev_read(self.reg_tx_control)
+           if ~(current & 0x03):
+               self.set_bitmask(self.reg_tx_control, 0x03)
+       else:
+           self.clear_bitmask(self.reg_tx_control, 0x03)
 
- */
+*/
 func (r *RFID) SetAntenna(state bool) (err error) {
 	if state {
 		current, err := r.devRead(commands.TxControlReg)
@@ -491,7 +491,7 @@ func (r *RFID) SelectTag(serial []byte) (blocks byte, err error) {
 type AuthStatus byte
 
 const (
-	AuthOk          AuthStatus = iota
+	AuthOk AuthStatus = iota
 	AuthReadFailure
 	AuthFailure
 )
@@ -589,7 +589,7 @@ func calcBlockAddress(sector int, block int) (addr byte) {
 	return
 }
 
-func (r *RFID) ReadBlock(sector int, block int) (res [] byte, err error) {
+func (r *RFID) ReadBlock(sector int, block int) (res []byte, err error) {
 	res, err = r.read(calcBlockAddress(sector, block%3))
 	return
 }
@@ -611,12 +611,12 @@ func (r *RFID) WriteBlock(auth byte, sector int, block int, data [16]byte, key [
 	return
 }
 
-func (r *RFID) ReadSectorTrail(sector int) (res [] byte, err error) {
+func (r *RFID) ReadSectorTrail(sector int) (res []byte, err error) {
 	res, err = r.read(calcBlockAddress(sector&0xFF, 3))
 	return
 }
 
-func (r *RFID) WriteSectorTrail(auth byte, sector int, keyA [6]byte, keyB [6] byte, access *BlocksAccess, key []byte) (err error) {
+func (r *RFID) WriteSectorTrail(auth byte, sector int, keyA [6]byte, keyB [6]byte, access *BlocksAccess, key []byte) (err error) {
 	defer func() {
 		r.StopCrypto()
 	}()

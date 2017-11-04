@@ -1,8 +1,8 @@
 package sensor_hcsr04
 
 import (
-	"time"
 	"github.com/stianeikeland/go-rpio"
+	"time"
 )
 
 const HardStop = 1000000
@@ -14,7 +14,7 @@ type HCSR04 struct {
 }
 
 func NewHCSR04(echo int, // Echo pin
-	ping int,        // Trigger pin
+	ping int, // Trigger pin
 ) (result HCSR04) {
 	if err := rpio.Open(); err != nil {
 		panic(err.Error())

@@ -1,10 +1,10 @@
 package rf522
 
 import (
-	"testing"
-	"strconv"
-	"github.com/stretchr/testify/assert"
 	"fmt"
+	"github.com/stretchr/testify/assert"
+	"strconv"
+	"testing"
 )
 
 func TestBitCalc(t *testing.T) {

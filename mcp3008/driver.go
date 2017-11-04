@@ -1,8 +1,8 @@
 package mcp3008
 
 import (
-	"golang.org/x/exp/io/spi"
 	"fmt"
+	"golang.org/x/exp/io/spi"
 )
 
 type Mode int
