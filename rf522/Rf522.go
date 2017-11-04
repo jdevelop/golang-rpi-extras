@@ -545,6 +545,9 @@ func (r *RFID) preAccess(blockAddr byte, cmd byte) (data []byte, backLen int, er
 
 func (r *RFID) read(blockAddr byte) (data []byte, err error) {
 	data, backLen, err := r.preAccess(blockAddr, commands.PICC_READ)
+	if err != nil {
+		return
+	}
 	logrus.Info("Read data:  ", backLen, printBytes(data), err)
 	if len(data) != 16 {
 		err = errors.New(fmt.Sprintf("Expected 16 bytes, actual %d", len(data)))
@@ -581,30 +584,66 @@ func (r *RFID) write(blockAddr byte, data []byte) (err error) {
 	return
 }
 
-func calcBlockAddress(sector byte, block byte) (addr byte) {
-	addr = sector*16 + block
+func calcBlockAddress(sector int, block int) (addr byte) {
+	addr = byte(sector*4 + block)
 	return
 }
 
-func (r *RFID) ReadBlock(sector byte, block byte) (res [] byte, err error) {
+func (r *RFID) ReadBlock(sector int, block int) (res [] byte, err error) {
 	res, err = r.read(calcBlockAddress(sector, block%3))
 	return
 }
 
-func (r *RFID) ReadSectorTrail(sector int) (res [] byte, err error) {
-	res, err = r.read(byte(sector*16 + 3))
+func (r *RFID) WriteBlock(auth byte, sector int, block int, data [16]byte, key []byte) (err error) {
+	defer func() {
+		r.StopCrypto()
+	}()
+	uuid, err := r.selectCard()
+	if err != nil {
+		return
+	}
+	state, err := r.Auth(auth, sector, 3, key, uuid)
+	if err != nil || state != AuthOk {
+		logrus.Fatal("Can not authenticate ", err, " => ", state)
+	}
+
+	err = r.write(calcBlockAddress(sector, block%3), data[:])
 	return
 }
 
-func (r *RFID) Auth(mode byte, sector byte, block byte, sectorKey []byte, serial []byte) (authS AuthStatus, err error) {
+func (r *RFID) ReadSectorTrail(sector int) (res [] byte, err error) {
+	res, err = r.read(calcBlockAddress(sector&0xFF, 3))
+	return
+}
+
+func (r *RFID) WriteSectorTrail(auth byte, sector int, keyA [6]byte, keyB [6] byte, access *BlocksAccess, key []byte) (err error) {
+	defer func() {
+		r.StopCrypto()
+	}()
+	uuid, err := r.selectCard()
+	if err != nil {
+		return
+	}
+	state, err := r.Auth(auth, sector, 3, key, uuid)
+	if err != nil || state != AuthOk {
+		logrus.Fatal("Can not authenticate ", err, " => ", state)
+	}
+
+	data := make([]byte, 16)
+	copy(data, keyA[:])
+	accessData := CalculateBlockAccess(access)
+	copy(data[6:], accessData[:4])
+	copy(data[10:], keyB[:])
+	err = r.write(calcBlockAddress(sector&0xFF, 3), data)
+	return
+}
+
+func (r *RFID) Auth(mode byte, sector int, block int, sectorKey []byte, serial []byte) (authS AuthStatus, err error) {
 	authS, err = r.auth(mode, calcBlockAddress(sector, block), sectorKey, serial)
 	return
 }
 
-func (r *RFID) ReadCard(sector byte, block byte, key []byte) (data []byte, err error) {
-	defer func() {
-		r.StopCrypto()
-	}()
+func (r *RFID) selectCard() (uuid []byte, err error) {
 	err = r.Wait()
 	if err != nil {
 		return
@@ -617,7 +656,7 @@ func (r *RFID) ReadCard(sector byte, block byte, key []byte) (data []byte, err e
 	if err != nil {
 		return
 	}
-	uuid, err := r.AntiColl()
+	uuid, err = r.AntiColl()
 	if err != nil {
 		return
 	}
@@ -625,13 +664,41 @@ func (r *RFID) ReadCard(sector byte, block byte, key []byte) (data []byte, err e
 	if err != nil {
 		return
 	}
-	state, err := r.Auth(commands.PICC_AUTHENT1B, sector, block, key, uuid)
+	return
+}
+
+func (r *RFID) ReadCard(auth byte, sector int, block int, key []byte) (data []byte, err error) {
+	defer func() {
+		r.StopCrypto()
+	}()
+	uuid, err := r.selectCard()
+	if err != nil {
+		return
+	}
+	state, err := r.Auth(auth, sector, block, key, uuid)
 	if err != nil || state != AuthOk {
 		logrus.Fatal("Can not authenticate ", err, " => ", state)
 	}
 
 	data, err = r.ReadBlock(sector, block)
 
+	return
+}
+
+func (r *RFID) ReadAuth(auth byte, sector int, key []byte) (data []byte, err error) {
+	defer func() {
+		r.StopCrypto()
+	}()
+	uuid, err := r.selectCard()
+	if err != nil {
+		return
+	}
+	state, err := r.Auth(auth, sector, 3, key, uuid)
+	if err != nil || state != AuthOk {
+		logrus.Fatal("Can not authenticate ", err, " => ", state)
+	}
+
+	data, err = r.read(calcBlockAddress(sector, 3))
 	return
 }
 
