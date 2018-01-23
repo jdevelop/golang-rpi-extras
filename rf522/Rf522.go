@@ -3,10 +3,10 @@ package rf522
 import (
 	"errors"
 	"fmt"
-	"github.com/davecheney/gpio"
-	rpio "github.com/davecheney/gpio/rpi"
 	"github.com/ecc1/spi"
 	"github.com/jdevelop/golang-rpi-extras/rf522/commands"
+	"github.com/jdevelop/gpio"
+	rpio "github.com/jdevelop/gpio/rpi"
 	"github.com/sirupsen/logrus"
 	"time"
 )
