@@ -708,7 +708,7 @@ type SectorTrailerAccess byte
 
 const (
 	AnyKeyRWID    BlockAccess = iota
-	RAB_WN_IN_DN              = 0x02
+	RAB_WN_IN_DN              = 0x02 // Read (A|B), Write (None), Increment (None), Decrement(None)
 	RAB_WB_IN_DN              = 0x04
 	RAB_WB_IB_DAB             = 0x06
 	RAB_WN_IN_DAB             = 0x01
