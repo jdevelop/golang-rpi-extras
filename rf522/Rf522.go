@@ -344,6 +344,11 @@ func (r *RFID) Request() (backBits int, err error) {
 func (r *RFID) Wait() (err error) {
 	irqChannel := make(chan bool)
 	r.IrqPin.BeginWatch(gpio.EdgeFalling, func() {
+		defer func(){
+			if recover() != nil {
+				err = errors.New("panic")
+			}
+		}()
 		irqChannel <- true
 	})
 
