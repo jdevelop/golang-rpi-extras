@@ -19,7 +19,7 @@ type RFID struct {
 	antennaGain   int
 	MaxSpeedHz    int
 	spiDev        *spi.Device
-	stop          chan bool
+	stop          chan interface{}
 }
 
 var DefaultKey = []byte{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}
@@ -49,7 +49,7 @@ func MakeRFID(busId, deviceId, maxSpeed, resetPin, irqPin int) (device *RFID, er
 		spiDev:      spiDev,
 		MaxSpeedHz:  maxSpeed,
 		antennaGain: 4,
-		stop:        make(chan bool, 1),
+		stop:        make(chan interface{}, 1),
 	}
 
 	pin, err := rpio.OpenPin(resetPin, gpio.ModeOutput)
