@@ -3,12 +3,13 @@ package rf522
 import (
 	"errors"
 	"fmt"
+	"time"
+
 	"github.com/ecc1/spi"
 	"github.com/jdevelop/golang-rpi-extras/rf522/commands"
 	"github.com/jdevelop/gpio"
 	rpio "github.com/jdevelop/gpio/rpi"
 	"github.com/sirupsen/logrus"
-	"time"
 )
 
 type RFID struct {
@@ -18,6 +19,7 @@ type RFID struct {
 	antennaGain   int
 	MaxSpeedHz    int
 	spiDev        *spi.Device
+	stop          chan interface{}
 }
 
 var DefaultKey = []byte{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}
@@ -26,20 +28,33 @@ func MakeRFID(busId, deviceId, maxSpeed, resetPin, irqPin int) (device *RFID, er
 
 	spiDev, err := spi.Open(fmt.Sprintf("/dev/spidev%d.%d", busId, deviceId), maxSpeed, 0)
 
-	spiDev.SetLSBFirst(false)
-	spiDev.SetBitsPerWord(8)
-
 	if err != nil {
 		return
 	}
 
+	err = spiDev.SetLSBFirst(false)
+	if err != nil {
+		spiDev.Close()
+		return
+	}
+
+	err = spiDev.SetBitsPerWord(8)
+
+	if err != nil {
+		spiDev.Close()
+		return
+	}
+
 	dev := &RFID{
-		spiDev:     spiDev,
-		MaxSpeedHz: maxSpeed,
+		spiDev:      spiDev,
+		MaxSpeedHz:  maxSpeed,
+		antennaGain: 4,
+		stop:        make(chan interface{}, 1),
 	}
 
 	pin, err := rpio.OpenPin(resetPin, gpio.ModeOutput)
 	if err != nil {
+		spiDev.Close()
 		return
 	}
 	dev.ResetPin = pin
@@ -47,6 +62,7 @@ func MakeRFID(busId, deviceId, maxSpeed, resetPin, irqPin int) (device *RFID, er
 
 	pin, err = rpio.OpenPin(irqPin, gpio.ModeInput)
 	if err != nil {
+		spiDev.Close()
 		return
 	}
 	dev.IrqPin = pin
@@ -88,12 +104,22 @@ func (r *RFID) Init() (err error) {
 	if err != nil {
 		return
 	}
+	err = r.devWrite(0x26, byte(r.antennaGain)<<4)
+	if err != nil {
+		return
+	}
 	err = r.SetAntenna(true)
 	if err != nil {
 		return
 	}
 	logrus.Debug("Init done")
 	return
+}
+
+func (r *RFID) Close() error {
+	r.stop <- true
+	close(r.stop)
+	return r.spiDev.Close()
 }
 
 func (r *RFID) writeSpiData(dataIn []byte) (out []byte, err error) {
@@ -344,7 +370,7 @@ func (r *RFID) Request() (backBits int, err error) {
 func (r *RFID) Wait() (err error) {
 	irqChannel := make(chan bool)
 	r.IrqPin.BeginWatch(gpio.EdgeFalling, func() {
-		defer func(){
+		defer func() {
 			if recover() != nil {
 				err = errors.New("panic")
 			}
@@ -386,6 +412,8 @@ interruptLoop:
 			return
 		}
 		select {
+		case <-r.stop:
+			return errors.New("stop signal")
 		case _ = <-irqChannel:
 			break interruptLoop
 		case <-time.After(100 * time.Millisecond):
